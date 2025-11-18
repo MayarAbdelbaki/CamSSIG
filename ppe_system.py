@@ -7,6 +7,8 @@ import cv2
 import time
 import os
 import tempfile
+import requests
+import base64
 from datetime import datetime
 from typing import Optional
 from pop import Util
@@ -26,6 +28,7 @@ class PPEDetectionSystem:
         width: int = 640, 
         height: int = 480,
         wait_interval: int = 5,
+        hf_api_url: str = None,
         hf_token: Optional[str] = None,
         use_gradio_client: bool = True
     ):
@@ -36,12 +39,14 @@ class PPEDetectionSystem:
             width: Camera frame width
             height: Camera frame height
             wait_interval: Seconds to wait after face detection before capturing
+            hf_api_url: Hugging Face API URL (for HTTP method)
             hf_token: Optional Hugging Face API token
             use_gradio_client: Use gradio_client library (recommended)
         """
         self.width = width
         self.height = height
         self.wait_interval = wait_interval
+        self.hf_api_url = hf_api_url
         self.hf_token = hf_token
         self.use_gradio_client = use_gradio_client and GRADIO_CLIENT_AVAILABLE
         
@@ -98,32 +103,67 @@ class PPEDetectionSystem:
         )
         return len(faces) > 0, faces
     
-    def send_to_api(self, frame) -> Optional[dict]:
-        """Send frame to PPE detection API"""
+    def capture_image_base64(self, frame):
+        """Capture and encode image as base64"""
+        _, buffer = cv2.imencode('.jpg', frame)
+        image_bytes = buffer.tobytes()
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        return image_base64
+    
+    def send_to_api_http(self, image_base64: str) -> Optional[dict]:
+        """Send image using HTTP API with base64"""
+        if not self.hf_api_url:
+            return None
+        
+        headers = {'Content-Type': 'application/json'}
+        if self.hf_token:
+            headers['Authorization'] = f'Bearer {self.hf_token}'
+        
+        image_data_uri = f"data:image/jpeg;base64,{image_base64}"
+        payload = {"data": [{"url": image_data_uri}]}
+        
+        try:
+            response = requests.post(self.hf_api_url, json=payload, headers=headers, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            
+            if "data" in result and len(result["data"]) > 0:
+                return {"status": "success", "result": result["data"][0]}
+            return result
+        except Exception as e:
+            print(f"✗ HTTP API error: {e}")
+            return None
+    
+    def send_to_api_gradio(self, frame) -> Optional[dict]:
+        """Send image using gradio_client with temp file"""
         if not self.use_gradio_client or not self.gradio_client:
             return None
         
         try:
-            # Save frame to temporary file
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
             _, buffer = cv2.imencode('.jpg', frame)
             temp_file.write(buffer.tobytes())
             temp_file.close()
             
-            # Send to API
             result = self.gradio_client.predict(
                 image=handle_file(temp_file.name),
                 api_name="/predict"
             )
             
-            # Clean up
             os.unlink(temp_file.name)
-            
             return {"status": "success", "result": result}
             
         except Exception as e:
-            print(f"✗ API error: {e}")
+            print(f"✗ Gradio API error: {e}")
             return None
+    
+    def send_to_api(self, frame) -> Optional[dict]:
+        """Send frame to API (tries gradio_client, falls back to HTTP)"""
+        if self.use_gradio_client and self.gradio_client:
+            return self.send_to_api_gradio(frame)
+        else:
+            image_base64 = self.capture_image_base64(frame)
+            return self.send_to_api_http(image_base64)
     
     def run(self, show_preview: bool = True):
         """Main detection loop"""
@@ -220,14 +260,16 @@ def main():
     CAMERA_WIDTH = 640
     CAMERA_HEIGHT = 480
     WAIT_INTERVAL = 5  # seconds
+    HF_API_URL = "https://mayarelshamy-ppe-detection-system.hf.space/api/predict"
     HF_TOKEN = None  # Optional: add your Hugging Face token
-    USE_GRADIO_CLIENT = True  # Set to False to disable API calls
+    USE_GRADIO_CLIENT = True  # Set to False to use HTTP API instead
     
     # Run system
     system = PPEDetectionSystem(
         width=CAMERA_WIDTH,
         height=CAMERA_HEIGHT,
         wait_interval=WAIT_INTERVAL,
+        hf_api_url=HF_API_URL,
         hf_token=HF_TOKEN,
         use_gradio_client=USE_GRADIO_CLIENT
     )
