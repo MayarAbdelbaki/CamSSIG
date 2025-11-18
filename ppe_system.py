@@ -17,7 +17,7 @@ try:
     GRADIO_CLIENT_AVAILABLE = True
 except ImportError:
     GRADIO_CLIENT_AVAILABLE = False
-    print("Warning: gradio_client not available. Install with: pip install gradio_client")
+    print("Note: gradio_client not available. Install with: pip install gradio_client")
 
 
 class PPEDetectionSystem:
@@ -26,7 +26,8 @@ class PPEDetectionSystem:
         width: int = 640, 
         height: int = 480,
         wait_interval: int = 5,
-        hf_token: Optional[str] = None
+        hf_token: Optional[str] = None,
+        use_gradio_client: bool = True
     ):
         """
         Initialize PPE detection system with hardware camera
@@ -36,11 +37,13 @@ class PPEDetectionSystem:
             height: Camera frame height
             wait_interval: Seconds to wait after face detection before capturing
             hf_token: Optional Hugging Face API token
+            use_gradio_client: Use gradio_client library (recommended)
         """
         self.width = width
         self.height = height
         self.wait_interval = wait_interval
         self.hf_token = hf_token
+        self.use_gradio_client = use_gradio_client and GRADIO_CLIENT_AVAILABLE
         
         # Camera and detection
         self.camera = None
@@ -52,13 +55,14 @@ class PPEDetectionSystem:
         
         # API client
         self.gradio_client = None
-        if GRADIO_CLIENT_AVAILABLE:
+        if self.use_gradio_client:
             try:
                 space_url = "https://mayarelshamy-ppe-detection-system.hf.space"
                 self.gradio_client = Client(space_url, hf_token=hf_token)
-                print("✓ API client initialized")
+                print("Using gradio_client for API calls (recommended)")
             except Exception as e:
-                print(f"✗ Failed to initialize API client: {e}")
+                print(f"Failed to initialize gradio_client: {e}")
+                self.use_gradio_client = False
     
     def _init_camera(self):
         """Initialize hardware camera"""
@@ -96,8 +100,7 @@ class PPEDetectionSystem:
     
     def send_to_api(self, frame) -> Optional[dict]:
         """Send frame to PPE detection API"""
-        if not self.gradio_client:
-            print("✗ API client not available")
+        if not self.use_gradio_client or not self.gradio_client:
             return None
         
         try:
@@ -218,13 +221,15 @@ def main():
     CAMERA_HEIGHT = 480
     WAIT_INTERVAL = 5  # seconds
     HF_TOKEN = None  # Optional: add your Hugging Face token
+    USE_GRADIO_CLIENT = True  # Set to False to disable API calls
     
     # Run system
     system = PPEDetectionSystem(
         width=CAMERA_WIDTH,
         height=CAMERA_HEIGHT,
         wait_interval=WAIT_INTERVAL,
-        hf_token=HF_TOKEN
+        hf_token=HF_TOKEN,
+        use_gradio_client=USE_GRADIO_CLIENT
     )
     system.run(show_preview=True)
 
